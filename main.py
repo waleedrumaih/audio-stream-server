@@ -1,6 +1,6 @@
 import asyncio
 import os
-from aiohttp import web
+from aiohttp import web, WSMsgType
 
 listeners = set()
 
@@ -106,14 +106,17 @@ async def health_handler(request):
 
 async def websocket_handler(request):
     path = request.path
-    ws = web.WebSocketResponse()
+    ws = web.WebSocketResponse(
+        heartbeat=30,       # server pings ESP32 every 30 seconds
+        receive_timeout=60  # waits 60 seconds before disconnecting
+    )
     await ws.prepare(request)
 
     if path == "/audio":
         print("ESP32 connected!")
         try:
             async for msg in ws:
-                if msg.type == web.WSMsgType.BINARY:
+                if msg.type == WSMsgType.BINARY:
                     dead = set()
                     for listener in listeners:
                         try:
@@ -121,6 +124,11 @@ async def websocket_handler(request):
                         except Exception:
                             dead.add(listener)
                     listeners -= dead
+                elif msg.type == WSMsgType.PING:
+                    await ws.pong()
+                elif msg.type == WSMsgType.ERROR:
+                    print(f"ESP32 WS error: {ws.exception()}")
+                    break
         except Exception as e:
             print(f"ESP32 error: {e}")
         finally:
@@ -131,7 +139,8 @@ async def websocket_handler(request):
         print(f"Listener joined! Total: {len(listeners)}")
         try:
             async for msg in ws:
-                pass  # browser doesn't send anything
+                if msg.type == WSMsgType.ERROR:
+                    break
         except Exception:
             pass
         finally:
